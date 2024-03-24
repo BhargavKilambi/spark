@@ -65,6 +65,7 @@ private[spark] class BasicExecutorFeatureStep(
   } else {
     kubernetesConf.get(MEMORY_OVERHEAD_FACTOR)
   }
+  private val bestEffortExecutor = kubernetesConf.get(KUBERNETES_EXECUTOR_QOS_BEST_EFFORT)
 
   val execResources = ResourceProfile.getResourcesForClusterManager(
     resourceProfile.id,
@@ -184,20 +185,16 @@ private[spark] class BasicExecutorFeatureStep(
     if (!isDefaultProfile) {
       if (pod.container != null && pod.container.getResources() != null) {
         logDebug("NOT using the default profile and removing template resources")
-        pod.container.setResources(new ResourceRequirements())
+        if (!bestEffortExecutor) {
+          pod.container.setResources(new ResourceRequirements())
+        }
       }
     }
 
-    val executorContainer = new ContainerBuilder(pod.container)
+    val executorContainerBuilder = new ContainerBuilder(pod.container)
       .withName(Option(pod.container.getName).getOrElse(DEFAULT_EXECUTOR_CONTAINER_NAME))
       .withImage(executorContainerImage)
       .withImagePullPolicy(kubernetesConf.imagePullPolicy)
-      .editOrNewResources()
-        .addToRequests("memory", executorMemoryQuantity)
-        .addToLimits("memory", executorMemoryQuantity)
-        .addToRequests("cpu", executorCpuQuantity)
-        .addToLimits(executorResourceQuantities.asJava)
-        .endResources()
       .addNewEnv()
         .withName(ENV_SPARK_USER)
         .withValue(Utils.getCurrentUserName())
@@ -205,7 +202,24 @@ private[spark] class BasicExecutorFeatureStep(
       .addAllToEnv(executorEnv.asJava)
       .addAllToPorts(requiredPorts.asJava)
       .addToArgs("executor")
-      .build()
+
+
+    val executorContainer = {
+      if (bestEffortExecutor) {
+        logInfo("spark executor QoS is set to BestEffort. Skipped setting cpu & memory resources on container")
+        executorContainerBuilder.build()
+      } else {
+        executorContainerBuilder
+          .editOrNewResources()
+          .addToRequests("memory", executorMemoryQuantity)
+          .addToLimits("memory", executorMemoryQuantity)
+          .addToRequests("cpu", executorCpuQuantity)
+          .addToLimits(executorResourceQuantities.asJava)
+          .endResources()
+          .build()
+      }
+    }
+
     val executorContainerWithConfVolume = if (disableConfigMap) {
       executorContainer
     } else {
@@ -217,13 +231,18 @@ private[spark] class BasicExecutorFeatureStep(
         .build()
     }
     val containerWithLimitCores = if (isDefaultProfile) {
-      executorLimitCores.map { limitCores =>
-        val executorCpuLimitQuantity = new Quantity(limitCores)
-        new ContainerBuilder(executorContainerWithConfVolume)
-          .editResources()
-          .addToLimits("cpu", executorCpuLimitQuantity)
-          .endResources()
-          .build()
+      executorLimitCores.map { limitCores => {
+        if (bestEffortExecutor) {
+          executorContainerWithConfVolume
+        } else {
+          val executorCpuLimitQuantity = new Quantity(limitCores)
+          new ContainerBuilder(executorContainerWithConfVolume)
+            .editResources()
+            .addToLimits("cpu", executorCpuLimitQuantity)
+            .endResources()
+            .build()
+        }
+      }
       }.getOrElse(executorContainerWithConfVolume)
     } else {
       executorContainerWithConfVolume

@@ -26,12 +26,13 @@ import org.apache.spark.deploy.k8s._
 import org.apache.spark.deploy.k8s.Config._
 import org.apache.spark.deploy.k8s.Constants._
 import org.apache.spark.deploy.k8s.submit._
+import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config._
 import org.apache.spark.ui.SparkUI
 import org.apache.spark.util.Utils
 
 private[spark] class BasicDriverFeatureStep(conf: KubernetesDriverConf)
-  extends KubernetesFeatureConfigStep {
+  extends KubernetesFeatureConfigStep with Logging {
 
   private val driverPodName = conf
     .get(KUBERNETES_DRIVER_POD_NAME)
@@ -81,6 +82,8 @@ private[spark] class BasicDriverFeatureStep(conf: KubernetesDriverConf)
       driverMinimumMemoryOverhead))
   private val driverMemoryWithOverheadMiB = driverMemoryMiB + memoryOverheadMiB
 
+  private val bestEffortDriver = conf.get(KUBERNETES_DRIVER_QOS_BEST_EFFORT)
+
   override def configurePod(pod: SparkPod): SparkPod = {
     val driverCustomEnvs = KubernetesUtils.buildEnvVars(
       Seq(ENV_APPLICATION_ID -> conf.appId) ++ conf.environment)
@@ -99,7 +102,7 @@ private[spark] class BasicDriverFeatureStep(conf: KubernetesDriverConf)
       conf.sparkConf.getInt(BLOCK_MANAGER_PORT.key, DEFAULT_BLOCKMANAGER_PORT)
     )
     val driverUIPort = SparkUI.getUIPort(conf.sparkConf)
-    val driverContainer = new ContainerBuilder(pod.container)
+    val driverContainerBuilder = new ContainerBuilder(pod.container)
       .withName(Option(pod.container.getName).getOrElse(DEFAULT_DRIVER_CONTAINER_NAME))
       .withImage(driverContainerImage)
       .withImagePullPolicy(conf.imagePullPolicy)
@@ -129,14 +132,23 @@ private[spark] class BasicDriverFeatureStep(conf: KubernetesDriverConf)
           .withNewFieldRef("v1", "status.podIP")
           .build())
         .endEnv()
-      .editOrNewResources()
-        .addToRequests("cpu", driverCpuQuantity)
-        .addToLimits(maybeCpuLimitQuantity.toMap.asJava)
-        .addToRequests("memory", driverMemoryQuantity)
-        .addToLimits("memory", driverMemoryQuantity)
-        .addToLimits(driverResourceQuantities.asJava)
-        .endResources()
-      .build()
+
+    val driverContainer = {
+      if (bestEffortDriver) {
+        logInfo("spark driver QoS is set to BestEffort. Skipped setting cpu & memory resources on container")
+        driverContainerBuilder.build()
+      } else {
+        driverContainerBuilder
+          .editOrNewResources()
+            .addToRequests("cpu", driverCpuQuantity)
+            .addToLimits(maybeCpuLimitQuantity.toMap.asJava)
+            .addToRequests("memory", driverMemoryQuantity)
+            .addToLimits("memory", driverMemoryQuantity)
+            .addToLimits(driverResourceQuantities.asJava)
+            .endResources()
+          .build()
+      }
+    }
 
     val driverPod = new PodBuilder(pod.pod)
       .editOrNewMetadata()

@@ -749,6 +749,26 @@ private[spark] object Config extends Logging {
       .checkValue(value => value > 0, "Gracefully shutdown period must be a positive time value")
       .createWithDefaultString("20s")
 
+  val KUBERNETES_DRIVER_QOS_BEST_EFFORT =
+    ConfigBuilder("spark.kubernetes.driver.qos.bestEffort")
+      .doc("When enabled, driver will be created without any cpu & memory " +
+        "resources specified on the container. This enables BestEffort QoS " +
+        "on Kubernetes. This will not impact the actual JVM options on the driver." +
+        "No impact to any ephemeralStorage set or volumes mounted to the container")
+      .version("4.0.0")
+      .booleanConf
+      .createWithDefault(false)
+
+  val KUBERNETES_EXECUTOR_QOS_BEST_EFFORT =
+    ConfigBuilder("spark.kubernetes.executor.qos.bestEffort")
+      .doc("When enabled, executor(s) will be created without any cpu & memory " +
+        "resources specified on the container. This enables BestEffort QoS " +
+        "on Kubernetes. This will not impact the actual JVM options on the executor." +
+        "No impact to any ephemeralStorage set or volumes mounted to the container")
+      .version("4.0.0")
+      .booleanConf
+      .createWithDefault(false)
+
   val KUBERNETES_DRIVER_LABEL_PREFIX = "spark.kubernetes.driver.label."
   val KUBERNETES_DRIVER_ANNOTATION_PREFIX = "spark.kubernetes.driver.annotation."
   val KUBERNETES_DRIVER_SERVICE_LABEL_PREFIX = "spark.kubernetes.driver.service.label."
