@@ -206,7 +206,8 @@ private[spark] class BasicExecutorFeatureStep(
 
     val executorContainer = {
       if (bestEffortExecutor) {
-        logInfo("spark executor QoS is set to BestEffort. Skipped setting cpu & memory resources on container")
+        logInfo("spark executor QoS is set to BestEffort. Skipped setting cpu & memory resources" +
+          " on container")
         executorContainerBuilder.build()
       } else {
         executorContainerBuilder

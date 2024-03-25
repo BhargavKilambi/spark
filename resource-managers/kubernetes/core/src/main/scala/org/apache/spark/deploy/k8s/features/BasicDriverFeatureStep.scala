@@ -135,7 +135,8 @@ private[spark] class BasicDriverFeatureStep(conf: KubernetesDriverConf)
 
     val driverContainer = {
       if (bestEffortDriver) {
-        logInfo("spark driver QoS is set to BestEffort. Skipped setting cpu & memory resources on container")
+        logInfo("spark driver QoS is set to BestEffort. Skipped setting cpu & memory resources " +
+          "on container")
         driverContainerBuilder.build()
       } else {
         driverContainerBuilder
